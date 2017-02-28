@@ -2198,6 +2198,7 @@ class Prefixed(Subconstruct):
 
     :param lengthfield: a subcon used for storing the length
     :param subcon: the subcon used for storing the value
+    :param include_length: boolean to include size of lengthfield in itself
 
     Example::
 
@@ -2207,14 +2208,21 @@ class Prefixed(Subconstruct):
         >>>> Prefixed(VarInt, Byte[:]).parse(b"\x03\x01\x02\x03????following")
         [1, 2, 3]
     """
-    __slots__ = ["name", "lengthfield", "subcon"]
-    def __init__(self, lengthfield, subcon):
+    __slots__ = ["name", "lengthfield", "subcon", "include_length"]
+
+    def __init__(self, lengthfield, subcon, include_length=False):
         super(Prefixed, self).__init__(subcon)
         self.lengthfield = lengthfield
+        self.include_length = include_length
+
     def _parse(self, stream, context, path):
         length = self.lengthfield._parse(stream, context, path)
+        if self.include_length:
+            length -= self.lengthfield.sizeof()
         stream2 = BoundBytesIO(stream, length)
-        return self.subcon._parse(stream2, context, path)
+        obj = self.subcon._parse(stream2, context, path)
+        return obj
+
     def _build(self, obj, stream, context, path):
         try:
             # needs to be both fixed size, seekable and tellable (third not checked)
@@ -2227,15 +2235,18 @@ class Prefixed(Subconstruct):
             self.subcon._build(obj, stream, context, path)
             offset3 = stream.tell()
             stream.seek(offset1)
-            self.lengthfield._build(offset3-offset2, stream, context, path)
+            if self.include_length:
+                self.lengthfield._build(offset3-offset2+self.lengthfield.sizeof(), stream, context, path)
+            else:
+                self.lengthfield._build(offset3-offset2, stream, context, path)
             stream.seek(offset3)
         except SizeofError:
             data = self.subcon.build(obj, context)
             self.lengthfield._build(len(data), stream, context, path)
             _write_stream(stream, len(data), data)
+
     def _sizeof(self, context, path):
         return self.lengthfield._sizeof(context, path) + self.subcon._sizeof(context, path)
-
 
 class Checksum(Construct):
     r"""
